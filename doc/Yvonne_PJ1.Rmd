@@ -1,0 +1,278 @@
+---
+title: "Project 1: Text Mining"
+author: "Yvonne Zha lz2806"
+date: "2022/2/1"
+output: html_document
+---
+## Can 'Schools' in Philosophy represent the similarity between philosophers? 
+
+Speaking of great philosophers, you may come up with Plato, Aristotle, etc. However, how will you explain the relationship of these philosophers? Schools can be a good perspective to investigate into this problem. As a non-expert in philosophy, the very first question I would like to propose is: what does that 'School' stands for here? Does 'School' explain the similarity between philosophers, or it's just a meaningless property? My hypothesis here would be: 'School' can actually explain the similarity between philosophers. To verify my hypothesis, I decide to use Text Mining techiques, especially Topic Modeling, to cluter the philosophers, and finally compare the results with the schools which these philosophers belong to. Furthermore, I would also like to investigate the relationship between schools. 
+
+## Part 1: Set Up Environment and Data Processing 
+
+```{r, warning=FALSE, message=FALSE}
+packages.used=c("ggplot2", "tibble", 
+                "dplyr", "textmineR", "wordcloud",
+                "topicmodels", "factoextra", "quanteda", 
+                "tm", "tidyverse", "tidytext")
+# check packages that need to be installed.
+packages.needed=setdiff(packages.used, 
+                        intersect(installed.packages()[,1], 
+                                  packages.used))
+# install additional packages
+if(length(packages.needed)>0){
+  install.packages(packages.needed, dependencies = TRUE)
+}
+
+# load packages
+library(ggplot2)
+library(tibble)
+library(dplyr)
+library(textmineR)
+library(wordcloud)
+library(topicmodels)
+library(factoextra)
+library(quanteda)
+library(tm)
+library(tidyverse)
+library(tidytext)
+```
+
+
+
+
+```{r, warning=FALSE, message = FALSE}
+# Read in data
+file.path <- "../data/philosophy_data.csv"
+file <- read.csv(file.path, encoding = "UTF-8")
+head(file)
+```
+
+
+```{r, warning=FALSE, message = FALSE}
+summary(file)
+```
+
+
+
+## Part 2: Exploratory Data Analysis
+
+```{r, warning=FALSE, message = FALSE}
+ggplot(file) +
+  geom_bar(aes(y = school))
+```
+
+
+
+```{r, warning=FALSE, message = FALSE}
+ggplot(file) +
+  geom_bar(aes(y = author))
+```
+
+
+
+
+```{r, warning=FALSE, message = FALSE}
+count_df <- unique(file[c("author", "school")])
+tab <- table(count_df$school)
+df <- data.frame(school = names(tab), freq = as.numeric(tab))
+ggplot(df) +
+  geom_bar(stat = "identity", aes(x=freq, y=school))
+```
+
+In this dataset, Analytic and Aristotle have the highest number of sentences among all the schools, while individually Aristotle and Plato are the most productive philosophers. For each school, Analytic has most philosophers, while Aristotle, Plato, Nietzsche are individual philosophers who did not belong to any school. 
+
+
+```{r, warning=FALSE, message = FALSE}
+ggplot(file) +
+  geom_histogram(aes(x = sentence_length), binwidth = 15)
+```
+
+The length of each sentence is possibly the log-normal distribution. It's heavily right-skewed, indicating that there is a small amount of outliers, which are long and complicated sentences.  
+
+
+```{r, warning=FALSE, message = FALSE}
+ggplot(file) +
+  geom_boxplot(aes(x = sentence_length, y = author))
+```
+
+Looking at the largest median and smallest median, we can find that Wittgenstein has shortest sentence on avgerage, while Descartes has longest on average. Let's take a look at their most shortest and longest sentences.
+
+
+```{r, warning=FALSE, message = FALSE}
+# Look into Wittgenstein
+file %>%
+  filter(author == "Wittgenstein", 
+         sentence_length <= 50) %>%
+  select(sentence_spacy) %>%
+  sample_n(10)
+```
+
+
+
+```{r, warning=FALSE, message = FALSE}
+# Look into Descartes
+file %>%
+  filter(author == "Descartes", 
+         sentence_length >= 1000) %>%
+  select(sentence_spacy) %>%
+  sample_n(1)
+```
+
+
+The short senetences are more striking and clear, while long sentences are more complicated to understand. From this perspective maybe we can say Wittgenstein is more understandable for readers than Descartes.
+
+
+## Part 3: How is each philosopher differ from each other -- Topic modeling and Clustering for philosophers
+
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+dtm <- CreateDtm(file$sentence_lowered, 
+                 doc_names = file$author
+                 )
+doc_lengths <- Matrix::rowSums(dtm)
+dtm1 <- dtm[doc_lengths > 0, ]
+file1 <- file[doc_lengths > 0, ]
+```
+
+Build LDA model.
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+# LDA modeling
+# k=5: classify into five topics
+k <- 5
+ldaOut <- LDA(dtm1, k, control = list(seed = 1234))
+
+# results
+ldaOut.topics <- as.matrix(topics(ldaOut))
+table(c(1:k, ldaOut.topics))
+```
+
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+ldaOut.terms <- as.matrix(terms(ldaOut,20))
+ldaOut.terms
+```
+
+Cluster each philosopher based on the results of LDA.
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+topicProbabilities <- as.data.frame(ldaOut@gamma)
+file1$ldatopic <- as.vector(ldaOut.topics)
+file1 <- cbind(file1, topicProbabilities)
+presid.summary <- tbl_df(file1)%>%
+  select(author, V1:V5)%>%
+  group_by(author)%>%
+  summarise_each(funs(mean))
+presid.summary <- as.data.frame(presid.summary)
+rownames(presid.summary) <- as.character((presid.summary[,1]))
+km.res <- kmeans(scale(presid.summary[,-1]), iter.max=1000,
+              5)
+options(ggrepel.max.overlaps = Inf)
+fviz_cluster(km.res, 
+             stand=T, repel= TRUE,
+             data = presid.summary[,-1],
+             show.clust.cent=FALSE)
+```
+
+```{r, warning=FALSE, message = FALSE}
+unique(file1[c("author", "school")])
+```
+
+
+
+Does the clustering results coincides with schools? Take feminism as an example, Wollstonecraft, Beauvoir and Davis are perfectly clustered into one group. For Analytic school, which has most philosophers, Moore, Wittgenstein, Lewis, Quine, Popper, and Kripke also are clustered perfectly. So the answer is yes! Clustering really does a good job here, according the fact that philosophers from the same school falls into the same cluster. Besides, the connection between schools can also be inferred from the cluster results. Empiricism and Rationalism are close, while feminism are different from other schools. We can further conduct cluster on schools to see if this still holds.
+
+
+## Part 4: How is each school differ from each other -- Topic modeling and Clustering for schools
+
+Run LDA.
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+# Topic modeling for schools
+# genearate TermDocumentMatrix
+dtm_s <- CreateDtm(file$sentence_lowered, 
+                 doc_names = file$school
+                 )
+doc_lengths <- Matrix::rowSums(dtm_s)
+dtm2 <- dtm_s[doc_lengths > 0, ]
+file2 <- file[doc_lengths > 0, ]
+```
+
+
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+# LDA modeling
+# k=5: classify into five topics
+k <- 5
+ldaOut2 <- LDA(dtm2, k, control = list(seed = 1234))
+
+# results
+ldaOut.topics2 <- as.matrix(topics(ldaOut2))
+table(c(1:k, ldaOut.topics2))
+```
+
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+ldaOut.terms2 <- as.matrix(terms(ldaOut2,20))
+ldaOut.terms2
+```
+
+Cluster each school based on the results of LDA.
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+topicProbabilities2 <- as.data.frame(ldaOut2@gamma)
+file2$ldatopic <- as.vector(ldaOut.topics2)
+file2 <- cbind(file2, topicProbabilities2)
+presid.summary2 <- tbl_df(file2)%>%
+  select(school, V1:V5)%>%
+  group_by(school)%>%
+  summarise_each(funs(mean))
+presid.summary2 <- as.data.frame(presid.summary2)
+rownames(presid.summary2) <- as.character((presid.summary2[,1]))
+km.res2 <- kmeans(scale(presid.summary2[,-1]), iter.max=1000,
+              5)
+options(ggrepel.max.overlaps = Inf)
+fviz_cluster(km.res2, 
+             stand=T, repel= TRUE,
+             data = presid.summary2[,-1],
+             show.clust.cent=FALSE)
+```
+
+We conclude that Captilalism, Communism, Analystic are close, German idealism, Empiricism and Rationalism are close, while feminism are different from other schools. We are excited to say this coincides with the conclusions in Part 3 to some extent! 
+
+## Part 5: Case Analysis -- Feminism
+
+Let's take a look at a specific case! The special school we would like to investigate is feminism. We could use a wordcloud to have an idea of what this school is about.
+
+```{r, warning=FALSE, message = FALSE, cache=TRUE}
+feminism <- file[file$school == "feminism", "sentence_lowered"]
+docs3 <- Corpus(VectorSource(feminism))
+docs3 <- tm_map(docs3, removeWords, stopwords("english"))
+
+dtm3 <- TermDocumentMatrix(docs3) 
+matrix3 <- as.matrix(dtm3) 
+words <- sort(rowSums(matrix3),decreasing=TRUE) 
+df <- data.frame(word = names(words),freq=words)
+
+set.seed(1234)
+wordcloud(words = df$word, freq = df$freq, min.freq = 1,
+          max.words=100, random.order=FALSE, rot.per=0.35,
+          colors=brewer.pal(8, "Dark2"))
+```
+
+
+Feminism, as we know, mainly focus on women. But men can still be a important word in the arguments of feminism. Words equivalent to women are also appearing a lot, such as female or girl. 
+
+
+
+
+
+
+
+
+
+
+
+
+
